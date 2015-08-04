@@ -21,12 +21,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cockroachdb/cockroach/proto"
 	"github.com/cockroachdb/cockroach/sql/parser"
 	"github.com/cockroachdb/cockroach/structured"
 	"github.com/cockroachdb/cockroach/util"
 )
 
-// Select selects rows from a single table.
+// Select selects rows from a single table. Select is the workhorse of the SQL
+// statements. In the slowest and most general case, select must perform full
+// table scans across multiple tables and sort and join the resulting rows on
+// arbitrary columns. Full table scans can be avoided when indexes can be used
+// to satisfy the where-clause.
+//
 // Privileges: READ on table
 //   Notes: postgres requires SELECT. Also requires UPDATE on "FOR UPDATE".
 //          mysql requires SELECT.
@@ -151,6 +157,12 @@ func (p *planner) Select(n *parser.Select) (planNode, error) {
 		}
 	}
 
+	// TODO(pmattis): Walk over the select exprs and WHERE clause looking for
+	// simple cases where an index can be used. Start with the set of all indexes
+	// and filter down the start and end keys based on the expressions in the
+	// WHERE clause. Ensure that the columns referenced in the select expressions
+	// are covered by the resulting indexes.
+
 	s := &scanNode{
 		txn:         p.txn,
 		desc:        desc,
@@ -164,6 +176,10 @@ func (p *planner) Select(n *parser.Select) (planNode, error) {
 	}
 	if n.Where != nil {
 		s.filter = n.Where.Expr
+	}
+
+	if i, err := p.selectIndex(s); err != nil || i != nil {
+		return i, err
 	}
 	return s, nil
 }
@@ -215,4 +231,43 @@ func (p *planner) expandSubqueries(stmt parser.Statement) error {
 	v := subqueryVisitor{planner: p}
 	parser.WalkStmt(&v, stmt)
 	return v.err
+}
+
+func (p *planner) selectIndex(s *scanNode) (planNode, error) {
+	if s.desc == nil {
+		return nil, nil
+	}
+
+	indexes := make([]indexState, len(s.desc.Indexes)+1)
+	indexes[0].desc = s.desc
+	indexes[0].index = s.desc.PrimaryIndex
+	for i := range s.desc.Indexes {
+		indexes[i+1].desc = s.desc
+		indexes[i+1].index = s.desc.Indexes[i]
+	}
+
+	for _, index := range indexes {
+		index.score(s)
+	}
+
+	return nil, nil
+}
+
+type indexState struct {
+	desc     *structured.TableDescriptor
+	index    structured.IndexDescriptor
+	beginKey proto.Key
+	endKey   proto.Key
+}
+
+var _ parser.Visitor = &indexState{}
+
+func (v *indexState) Visit(expr parser.Expr) parser.Expr {
+	return expr
+}
+
+func (v *indexState) score(s *scanNode) {
+	v.beginKey = proto.Key(structured.MakeIndexKeyPrefix(v.desc.ID, v.index.ID))
+	v.endKey = v.beginKey.PrefixEnd()
+	parser.WalkExpr(v, s.filter)
 }
