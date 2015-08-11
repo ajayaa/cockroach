@@ -40,9 +40,6 @@ type RequestHeader struct {
 	// Session settings that were returned in the last response that
 	// contained them, being reflected back to the server.
 	Session []byte `protobuf:"bytes,1,opt,name=session" json:"session,omitempty"`
-	// The transaction state returned in the previous response being
-	// reflected back.
-	Txn []byte `protobuf:"bytes,2,opt,name=txn" json:"txn,omitempty"`
 	// CmdID is optionally specified for request idempotence
 	// (i.e. replay protection).
 	CmdID            cockroach_proto3.ClientCmdID `protobuf:"bytes,3,opt,name=cmd_id" json:"cmd_id"`
@@ -67,13 +64,6 @@ func (m *RequestHeader) GetSession() []byte {
 	return nil
 }
 
-func (m *RequestHeader) GetTxn() []byte {
-	if m != nil {
-		return m.Txn
-	}
-	return nil
-}
-
 func (m *RequestHeader) GetCmdID() cockroach_proto3.ClientCmdID {
 	if m != nil {
 		return m.CmdID
@@ -87,11 +77,7 @@ type ResponseHeader struct {
 	Error *cockroach_proto2.Error `protobuf:"bytes,1,opt,name=error" json:"error,omitempty"`
 	// Setting that should be reflected back in all subsequent requests.
 	// When not set, future requests should continue to use existing settings.
-	Session []byte `protobuf:"bytes,2,opt,name=session" json:"session,omitempty"`
-	// Transaction message returned in a response; not to be interpreted by
-	// the recipient and reflected in a subsequent request. When not set,
-	// the subsequent request should not contain a transaction object.
-	Txn              []byte `protobuf:"bytes,3,opt,name=txn" json:"txn,omitempty"`
+	Session          []byte `protobuf:"bytes,2,opt,name=session" json:"session,omitempty"`
 	XXX_unrecognized []byte `json:"-"`
 }
 
@@ -109,13 +95,6 @@ func (m *ResponseHeader) GetError() *cockroach_proto2.Error {
 func (m *ResponseHeader) GetSession() []byte {
 	if m != nil {
 		return m.Session
-	}
-	return nil
-}
-
-func (m *ResponseHeader) GetTxn() []byte {
-	if m != nil {
-		return m.Txn
 	}
 	return nil
 }
@@ -329,31 +308,6 @@ func (m *RequestHeader) Unmarshal(data []byte) error {
 			}
 			m.Session = append([]byte{}, data[iNdEx:postIndex]...)
 			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Txn", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				byteLen |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthWire
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Txn = append([]byte{}, data[iNdEx:postIndex]...)
-			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field CmdID", wireType)
@@ -481,31 +435,6 @@ func (m *ResponseHeader) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Session = append([]byte{}, data[iNdEx:postIndex]...)
-			iNdEx = postIndex
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Txn", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				byteLen |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthWire
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Txn = append([]byte{}, data[iNdEx:postIndex]...)
 			iNdEx = postIndex
 		default:
 			var sizeOfWire int
@@ -1213,10 +1142,6 @@ func (m *RequestHeader) Size() (n int) {
 		l = len(m.Session)
 		n += 1 + l + sovWire(uint64(l))
 	}
-	if m.Txn != nil {
-		l = len(m.Txn)
-		n += 1 + l + sovWire(uint64(l))
-	}
 	l = m.CmdID.Size()
 	n += 1 + l + sovWire(uint64(l))
 	if m.XXX_unrecognized != nil {
@@ -1234,10 +1159,6 @@ func (m *ResponseHeader) Size() (n int) {
 	}
 	if m.Session != nil {
 		l = len(m.Session)
-		n += 1 + l + sovWire(uint64(l))
-	}
-	if m.Txn != nil {
-		l = len(m.Txn)
 		n += 1 + l + sovWire(uint64(l))
 	}
 	if m.XXX_unrecognized != nil {
@@ -1378,12 +1299,6 @@ func (m *RequestHeader) MarshalTo(data []byte) (n int, err error) {
 		i = encodeVarintWire(data, i, uint64(len(m.Session)))
 		i += copy(data[i:], m.Session)
 	}
-	if m.Txn != nil {
-		data[i] = 0x12
-		i++
-		i = encodeVarintWire(data, i, uint64(len(m.Txn)))
-		i += copy(data[i:], m.Txn)
-	}
 	data[i] = 0x1a
 	i++
 	i = encodeVarintWire(data, i, uint64(m.CmdID.Size()))
@@ -1432,12 +1347,6 @@ func (m *ResponseHeader) MarshalTo(data []byte) (n int, err error) {
 		i++
 		i = encodeVarintWire(data, i, uint64(len(m.Session)))
 		i += copy(data[i:], m.Session)
-	}
-	if m.Txn != nil {
-		data[i] = 0x1a
-		i++
-		i = encodeVarintWire(data, i, uint64(len(m.Txn)))
-		i += copy(data[i:], m.Txn)
 	}
 	if m.XXX_unrecognized != nil {
 		i += copy(data[i:], m.XXX_unrecognized)

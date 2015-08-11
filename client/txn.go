@@ -82,6 +82,22 @@ func newTxn(db DB, depth int) *Txn {
 	return txn
 }
 
+// CreateTxn creates a transaction from a transaction protobuf.
+func CreateTxn(db DB, t *proto.Transaction) (*Txn, error) {
+	txn := &Txn{
+		db:      db,
+		wrapped: db.Sender,
+		txn:     *t,
+	}
+	txn.db.Sender = (*txnSender)(txn)
+	return txn, nil
+}
+
+// GetProtoFromTxn returns the transaction protobuf.
+func GetProtoFromTxn(txn *Txn) *proto.Transaction {
+	return &txn.txn
+}
+
 // SetDebugName sets the debug name associated with the transaction which will
 // appear in log files and the web UI. Each transaction starts out with an
 // automatically assigned debug name composed of the file and line number where

@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/cockroach/server"
 	"github.com/cockroachdb/cockroach/testutils"
@@ -225,5 +226,116 @@ func TestInsecure(t *testing.T) {
 	}()
 	if _, err := db.Exec(`SELECT 1`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTransactions(t *testing.T) {
+	defer leaktest.AfterTest(t)
+	s, db := setup(t)
+	defer cleanup(s, db)
+
+	if _, err := db.Exec(`CREATE DATABASE t`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE t.kv (k CHAR PRIMARY KEY, v char)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO t.kv VALUES ($1, $2), ($3, $4)`, "a", "f", "b", "g"); err != nil {
+		t.Fatal(err)
+	}
+
+	if rows, err := db.Query("SELECT * FROM t.kv"); err != nil {
+		t.Fatal(err)
+	} else {
+		results := readAll(t, rows)
+		expectedResults := asResultSlice([][]string{
+			{"k", "v"},
+			{"a", "f"},
+			{"b", "g"},
+		})
+		if err := verifyResults(expectedResults, results); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	txn, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := txn.Query(`SELECT v FROM t.kv WHERE k IN ($1)`, "a"); err != nil {
+		t.Fatal(err)
+	} else {
+		results := readAll(t, rows)
+		expectedResults := asResultSlice([][]string{
+			{"v"},
+			{"f"},
+		})
+		if err := verifyResults(expectedResults, results); err != nil {
+			t.Fatal(err)
+		}
+		go runInParallel(db, t)
+		time.Sleep(time.Millisecond * 100)
+
+		if _, err := txn.Exec(`UPDATE t.kv SET v = $2 WHERE k IN ($1)`, "b", "h"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rows, err := txn.Query(`SELECT v FROM t.kv WHERE k IN ($1)`, "b"); err != nil {
+		t.Fatal(err)
+	} else {
+		results := readAll(t, rows)
+		expectedResults := asResultSlice([][]string{
+			{"v"},
+			{"h"},
+		})
+		if err := verifyResults(expectedResults, results); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := txn.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	// t.Fatal(errors.New("failed"))
+	time.Sleep(time.Millisecond * 10)
+}
+
+func runInParallel(db *sql.DB, t *testing.T) {
+	txn, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowB, errB := txn.Query(`SELECT v FROM t.kv WHERE k IN ($1)`, "b")
+	if errB != nil {
+		t.Fatal(errB)
+	}
+	if _, err := txn.Exec(`UPDATE t.kv SET v = $2 WHERE k IN ($1)`, "a", "j"); err != nil {
+		t.Fatal(err)
+	}
+	rowA, errA := txn.Query(`SELECT v FROM t.kv WHERE k IN ($1)`, "a")
+	if errA != nil {
+		t.Fatal(errA)
+	}
+	if err := txn.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	{
+		results := readAll(t, rowB)
+		expectedResults := asResultSlice([][]string{
+			{"v"},
+			{"g"},
+		})
+		if err := verifyResults(expectedResults, results); err != nil {
+			t.Fatal(err)
+		}
+	}
+	{
+		results := readAll(t, rowA)
+		expectedResults := asResultSlice([][]string{
+			{"v"},
+			{"j"},
+		})
+		if err := verifyResults(expectedResults, results); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

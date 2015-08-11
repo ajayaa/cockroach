@@ -32,6 +32,7 @@ import (
 	"github.com/cockroachdb/cockroach/sql/driver"
 	"github.com/cockroachdb/cockroach/sql/parser"
 	"github.com/cockroachdb/cockroach/util"
+	"github.com/cockroachdb/cockroach/util/log"
 
 	gogoproto "github.com/gogo/protobuf/proto"
 )
@@ -164,10 +165,20 @@ func (s *Server) exec(req driver.Request) (driver.Response, error) {
 		if err := gogoproto.Unmarshal(req.Session, &planner.session); err != nil {
 			return resp, err
 		}
+		if planner.session.Txn != nil {
+			var err error
+			if planner.txn, err = client.CreateTxn(*s.db, planner.session.Txn); err != nil {
+				return resp, err
+			}
+		}
 	}
+	log.Infof("received sql: %s", req.Sql)
 	stmts, err := parser.Parse(req.Sql)
 	if err != nil {
 		return resp, err
+	}
+	if len(stmts) == 0 {
+		return resp, util.Errorf("sql: %s; contains no statements, nothing to do!", req.Sql)
 	}
 	for _, stmt := range stmts {
 		// Bind all the placeholder variables in the stmt to actual values.
@@ -175,13 +186,29 @@ func (s *Server) exec(req driver.Request) (driver.Response, error) {
 			return resp, err
 		}
 		var plan planNode
-		if err := s.db.Txn(func(txn *client.Txn) error {
-			planner.txn = txn
+		if planner.txn != nil {
+			log.Infof("execute sql in transaction %v", planner.session.Txn)
 			plan, err = planner.makePlan(stmt)
-			planner.txn = nil
-			return err
-		}); err != nil {
-			return resp, err
+			if planner.session.Txn == nil {
+				planner.txn = nil
+			}
+		} else {
+			if err := s.db.Txn(func(txn *client.Txn) error {
+				planner.txn = txn
+				plan, err = planner.makePlan(stmt)
+				planner.txn = nil
+				return err
+			}); err != nil {
+				return resp, err
+			}
+			// If we began a transaction we should create a transaction
+			// object for subsequent stmts.
+			if planner.session.Txn != nil {
+				var err error
+				if planner.txn, err = client.CreateTxn(*s.db, planner.session.Txn); err != nil {
+					return resp, err
+				}
+			}
 		}
 
 		result := driver.Result{
@@ -214,11 +241,16 @@ func (s *Server) exec(req driver.Request) (driver.Response, error) {
 		if err := plan.Err(); err != nil {
 			return resp, err
 		}
-
 		resp.Results = append(resp.Results, result)
 	}
 
 	// Update session state.
+	if planner.txn != nil {
+		planner.session.Txn = client.GetProtoFromTxn(planner.txn)
+		log.Infof("Send txn back to client %v", planner.session.Txn)
+	} else if planner.session.Txn != nil {
+		panic("session contains a transaction for an inactive transaction.")
+	}
 	resp.Session, err = gogoproto.Marshal(&planner.session)
 	return resp, err
 }

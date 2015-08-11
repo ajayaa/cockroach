@@ -7707,7 +7707,7 @@ sqldefault:
 		sqlDollar = sqlS[sqlpt-3 : sqlpt+1]
 		//line sql.y:1531
 		{
-			sqlVAL.stmt = nil
+			sqlVAL.stmt = &BeginTransaction{}
 		}
 	case 329:
 		sqlDollar = sqlS[sqlpt-3 : sqlpt+1]
@@ -7719,7 +7719,7 @@ sqldefault:
 		sqlDollar = sqlS[sqlpt-2 : sqlpt+1]
 		//line sql.y:1539
 		{
-			sqlVAL.stmt = nil
+			sqlVAL.stmt = &CommitTransaction{}
 		}
 	case 331:
 		sqlDollar = sqlS[sqlpt-2 : sqlpt+1]
@@ -7731,7 +7731,7 @@ sqldefault:
 		sqlDollar = sqlS[sqlpt-2 : sqlpt+1]
 		//line sql.y:1547
 		{
-			sqlVAL.stmt = nil
+			sqlVAL.stmt = &RollbackTransaction{}
 		}
 	case 333:
 		sqlDollar = sqlS[sqlpt-2 : sqlpt+1]

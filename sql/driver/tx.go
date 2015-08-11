@@ -17,16 +17,43 @@
 
 package driver
 
-import "fmt"
+import "database/sql/driver"
 
 type tx struct {
 	conn *conn
 }
 
 func (t *tx) Commit() error {
-	return fmt.Errorf("TODO(pmattis): unimplemented")
+	if _, err := t.Exec("COMMIT TRANSACTION"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (t *tx) Rollback() error {
-	return fmt.Errorf("TODO(pmattis): unimplemented")
+	if _, err := t.Exec("ROLLBACK TRANSACTION"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *tx) Exec(query string, args ...interface{}) (driver.Result, error) {
+	var values []driver.Value
+	for _, arg := range args {
+		values = append(values, arg)
+	}
+	return t.conn.Exec(query, values)
+}
+
+func (t *tx) Prepare(query string) (*driver.Stmt, error) {
+	stmt, err := t.conn.Prepare(query)
+	return &stmt, err
+}
+
+func (t *tx) Query(query string, args ...interface{}) (r *rows, err error) {
+	var values []driver.Value
+	for _, arg := range args {
+		values = append(values, arg)
+	}
+	return t.conn.Query(query, values)
 }

@@ -13,21 +13,30 @@
 // permissions and limitations under the License. See the AUTHORS file
 // for names of contributors.
 //
-// Author: Vivek Menezes (vivek@cockroachlabs.com) 
+// Author: Vivek Menezes (vivek@cockroachlabs.com)
 
-syntax = "proto2";
-package cockroach.sql;
-option go_package = "sql";
+package parser
 
-import "gogoproto/gogo.proto";
-import "cockroach/proto/data.proto";
+// BeginTransaction represents a BEGIN statement
+type BeginTransaction struct {
+}
 
-option (gogoproto.sizer_all) = true;
-option (gogoproto.marshaler_all) = true;
-option (gogoproto.unmarshaler_all) = true;
+func (node *BeginTransaction) String() string {
+	return "BEGIN TRANSACTION "
+}
 
-message Session {
-  optional string database = 1 [(gogoproto.nullable) = false];
-  // Open transaction.
-  optional proto.Transaction txn = 2;
+// CommitTransaction represents a COMMIT statement.
+type CommitTransaction struct {
+}
+
+func (node *CommitTransaction) String() string {
+	return "COMMIT TRANSACTION "
+}
+
+// RollbackTransaction represents a ROLLBACK statement.
+type RollbackTransaction struct {
+}
+
+func (node *RollbackTransaction) String() string {
+	return "ROLLBACK TRANSACTION "
 }

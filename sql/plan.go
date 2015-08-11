@@ -46,6 +46,10 @@ func (p *planner) makePlan(stmt parser.Statement) (planNode, error) {
 	}
 
 	switch n := stmt.(type) {
+	case *parser.BeginTransaction:
+		return p.BeginTransaction(n)
+	case *parser.CommitTransaction:
+		return p.CommitTransaction(n)
 	case *parser.CreateDatabase:
 		return p.CreateDatabase(n)
 	case *parser.CreateTable:
@@ -64,6 +68,8 @@ func (p *planner) makePlan(stmt parser.Statement) (planNode, error) {
 		return p.makePlan(n.Select)
 	case *parser.Revoke:
 		return p.Revoke(n)
+	case *parser.RollbackTransaction:
+		return p.RollbackTransaction(n)
 	case *parser.Select:
 		return p.Select(n)
 	case *parser.Set:

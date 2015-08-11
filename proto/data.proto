@@ -182,7 +182,6 @@ message NodeList {
 // TODO(vivek): Remove parts of Transaction that expose internals.
 message Transaction {
   option (gogoproto.goproto_stringer) = false;
-
   optional string name = 1 [(gogoproto.nullable) = false];
   // Key is the key which anchors the transaction. This is typically
   // the first key read or written during the transaction and
