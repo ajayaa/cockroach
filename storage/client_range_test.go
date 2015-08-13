@@ -406,3 +406,95 @@ func TestInternalRangeLookupUseReverse(t *testing.T) {
 		}
 	}
 }
+
+// TestRangeLookupDuringRangeSplit reproduces a race condition where
+// RangeLookup returns a range that does not contain a specified key.
+//
+// To reproduce the scenario, we will look up a range while the meta2
+// space is being split. We will then utilize a fact that the command
+// queue does not block the range lookup request if its request header
+// key does not overlap with the request header keys of commands
+// issued for the range split.
+//
+// More specifically, the test takes the following steps:
+// 1) A store receives a range split request that splits the meta2 space.
+//    The split key is "\000\000meta2b".
+// 2) The replica starts processing the split request with timestamp T.
+// 3) While the replica is updating the range descriptors, the store
+//    receives a range lookup request for meta2 key "\000\000meta2a" with
+//    timestamp T' (> T).
+// 4) The range split completes and the range descriptors are updated.
+// 5) The replica processes the range look up request. It scans key ranges
+//    ["\x00\x00meta2a\x00", "\x00\x00meta3") and finds the end key
+//    of the right-side of the split range (start key = "\000\000meta2b").
+// 6) The result range of lookup for key "\000\000meta2a" does not
+//    contain the key.
+//
+// TODO(kaneda): Does this cause any problem? If so, should the
+// command queue block the range lookup while the admin split for the
+// meta2 space is running?
+func TestRangeLookupDuringRangeSplit(t *testing.T) {
+	defer leaktest.AfterTest(t)
+
+	waitForRangeLookup := make(chan struct{})
+	waitForRangeSplitStart := make(chan struct{})
+	waitForRangeSplitCompletion := make(chan struct{})
+
+	storage.TestingCommandFilter = func(args proto.Request) error {
+		if _, ok := args.(*proto.RangeLookupRequest); ok {
+			close(waitForRangeLookup)
+			<-waitForRangeSplitCompletion
+		} else if _, ok := args.(*proto.EndTransactionRequest); ok {
+			close(waitForRangeSplitStart)
+			// Block the range descriptor update until range lookup is scheduled.
+			<-waitForRangeLookup
+		}
+		return nil
+	}
+	defer func() {
+		storage.TestingCommandFilter = nil
+	}()
+
+	store, stopper := createTestStore(t)
+	defer stopper.Stop()
+
+	// Start range split for the meta2 space.
+	splitKey := keys.RangeMetaKey(proto.Key("b"))
+	go func() {
+		// Note that all the commands will not be blocked by
+		// the command queue since the key in the request
+		// header does not overlap with the range lookup key.
+		splitArgs := adminSplitArgs(splitKey, splitKey, 1, store.StoreID())
+		if _, err := store.ExecuteCmd(context.Background(), &splitArgs); err != nil {
+			t.Fatalf("unexpected split error: %s", err)
+		}
+		close(waitForRangeSplitCompletion)
+	}()
+
+	<-waitForRangeSplitStart
+
+	// Look up a range with a key that belonging to the left side of the split.
+	request := &proto.RangeLookupRequest{
+		RequestHeader: proto.RequestHeader{
+			Key:     keys.RangeMetaKey(proto.Key("a")),
+			RangeID: 1,
+			Replica: proto.Replica{StoreID: store.StoreID()},
+		},
+		MaxRanges: 1,
+	}
+	resp, err := store.ExecuteCmd(context.Background(), request)
+	if err != nil {
+		t.Fatalf("RangeLookup error: %s", err)
+	}
+	rlReply := resp.(*proto.RangeLookupResponse)
+	if int32(len(rlReply.Ranges)) != 1 {
+		t.Fatalf("unexpected number of ranges in the response, expected 1, but got %d", rlReply.Ranges)
+	}
+	// Returned range starts from the split key (= RangeMetaKey(proto.Key("b"))). It does not contain
+	// RangeMetaKey(proto.Key("a")).
+	rng := rlReply.Ranges[0]
+	if !rng.StartKey.Equal(splitKey) {
+		t.Fatalf("returned range does not start from the split key, expected %v ,but got %v",
+			splitKey, rng.StartKey)
+	}
+}
